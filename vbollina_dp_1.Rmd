@@ -1,0 +1,196 @@
+---
+title: "Neural Networks"
+author: "Vijay"
+date: "2/3/2020"
+output:
+  word_document: default
+  html_document: default
+---
+```{r}
+library(keras)
+library(ggplot2)
+library(tidyverse)
+library(cowplot)
+
+
+#importing imdb movie review dataset with top 10000 words
+imdb <- dataset_imdb(num_words = 10000)
+#spliting the data into train and test
+c(c(train_data, train_labels), c(test_data, test_labels)) %<-% imdb
+
+# Transforming data into binary.
+vectorize_sequences <- function(sequences, dimension = 10000) {
+  # Create an all-zero matrix of shape (len(sequences), dimension)
+  results <- matrix(0, nrow = length(sequences), ncol = dimension)
+  for (i in 1:length(sequences))
+    # Sets specific indices of results[i] to 1s
+    results[i, sequences[[i]]] <- 1
+  results
+}
+
+# Our vectorized training data
+x_train <- vectorize_sequences(train_data)
+# Our vectorized test data
+x_test <- vectorize_sequences(test_data)
+str(x_train[1,])
+# Our vectorized labels
+y_train <- as.numeric(train_labels)
+y_test <- as.numeric(test_labels)
+
+#Validation data
+val_indices <- 1:10000
+x_val <- x_train[val_indices,]
+partial_x_train <- x_train[-val_indices,]
+y_val <- y_train[val_indices]
+partial_y_train <- y_train[-val_indices]
+
+# Building neural network model without regularization.
+#Considering 32 untis and batch_size of 250 with 20 epochs.
+model1 <- keras_model_sequential() %>% 
+  layer_dense(units = 32, activation = "tanh", input_shape = c(10000)) %>% 
+  layer_dense(units = 1, activation = "sigmoid")
+model1 %>% compile(
+  optimizer = "rmsprop",
+  loss = "mse",
+  metrics = c("accuracy"))
+history <- model1 %>% fit(
+  partial_x_train,
+  partial_y_train,
+  epochs = 20,
+  batch_size = 250,
+  validation_data = list(x_val, y_val))
+# Visualizing the model1 output of loss function and accuracy
+model1.df <- as.data.frame(history$metrics)
+names(model1.df) <- c("train_loss","train_accuracy","val_loss","val_accuracy")
+model1.df <- model1.df %>% mutate(epochs=1:n()) %>% gather("split","values",-epochs) %>% separate(split,c("split","metric")) %>% spread(metric,values)
+p1<-ggplot(model1.df) + geom_line(aes(x=epochs,y=loss,color=split),size=0.8)+geom_point(aes(x=epochs,y=loss,color=factor(split)),size=1.5)+ggtitle("Epochs vs Loss function  with 1 hidden layer")+theme(panel.grid = element_blank(),panel.background = element_blank())+theme_classic()+theme(legend.position = 'top',legend.justification = 'left',legend.title = element_blank())
+p2<-ggplot(model1.df) + geom_line(aes(x=epochs,y=accuracy,color=split),size=0.8,show.legend = F)+geom_point(aes(x=epochs,y=accuracy,color=split),size=1.5,show.legend = F)+ggtitle("Epochs vs Accuracy")+theme(panel.grid = element_blank(),panel.background = element_blank())+theme_classic()
+plot_grid(p1,p2,nrow = 2)
+
+# It is clear from the plot that the model accuracy is more in training data set than in validation data set. Hence the model is "overfit".
+# By using Brute force method for units and batch_size, we observed values of 64,512 resp. tend to overfit. Hence model need to be tuned further. 
+
+# Building neural network model with regularization("L2 form") and dropout(50%) methods.
+model2 <- keras_model_sequential() %>% 
+  layer_dense(units = 32, activation = "tanh",kernel_regularizer = regularizer_l2(l=0.01),input_shape = c(10000)) %>% 
+  layer_dropout(rate=0.5) %>% 
+  layer_dense(units = 1, activation = "sigmoid")
+model2 %>% compile(
+    optimizer = "rmsprop",
+    loss = "mse",
+    metrics = c("accuracy")) 
+history2 <- model2 %>% fit(
+      partial_x_train,
+      partial_y_train,
+      epochs = 20,
+      batch_size = 250,
+      validation_data = list(x_val, y_val))
+
+model2.df <- as.data.frame(history2$metrics)
+names(model2.df) <- c("train_loss","train_accuracy","val_loss","val_accuracy")
+model2.df <- model2.df %>% mutate(epochs=1:n()) %>% gather("split","values",-epochs) %>% separate(split,c("split","metric")) %>% spread(metric,values)
+p3<-ggplot(model2.df) + geom_line(aes(x=epochs,y=loss,color=split),size=0.8)+geom_point(aes(x=epochs,y=loss,color=factor(split)),size=1.5)+ggtitle("Epochs vs Loss function  with L2 regularization")+theme(panel.grid = element_blank(),panel.background = element_blank())+theme_classic()+theme(legend.position = 'top',legend.justification = 'left',legend.title = element_blank())
+p4<-ggplot(model2.df) + geom_line(aes(x=epochs,y=accuracy,color=split),size=0.8,show.legend = F)+geom_point(aes(x=epochs,y=accuracy,color=split),size=1.5,show.legend = F)+ggtitle("Epochs vs Accuracy")+theme(panel.grid = element_blank(),panel.background = element_blank())+theme_classic()
+plot_grid(p3,p4,nrow = 2)
+#It clearly depicts from the above plot is L2 form of regularization tends to "overfit". 
+#It is observed that model tends to overfit with 64 units and 250 batch_size
+
+
+# Building neural network model with regularization("L1 form") and dropout methods using function model_fun().
+model_fun <- function(unit,epoch,size){
+  keras_model_sequential() %>% 
+  layer_dense(units = unit, activation = "tanh",kernel_regularizer = regularizer_l1(l=0.01),input_shape = c(10000)) %>% 
+  layer_dropout(rate=0.5) %>%
+  layer_dense(units = 1, activation = "sigmoid")%>% compile(
+  optimizer = "rmsprop",
+  loss = "mse",
+  metrics = c("accuracy")) %>% fit(
+  partial_x_train,
+  partial_y_train,
+  epochs = epoch,
+  batch_size = size,
+  validation_data = list(x_val, y_val))
+}
+
+# model with 32 units and bacth_size of 250
+model3 <- model_fun(32,20,250)
+#visualizing the model3 metrics
+model3.df <- as.data.frame(model3$metrics)
+names(model3.df) <- c("train_loss","train_accuracy","val_loss","val_accuracy")
+model3.df <- model3.df %>% mutate(epochs=1:n()) %>% gather("split","values",-epochs) %>% separate(split,c("split","metric")) %>% spread(metric,values)
+p5<-ggplot(model3.df) + geom_line(aes(x=epochs,y=loss,color=split),size=0.8)+geom_point(aes(x=epochs,y=loss,color=factor(split)),size=1.5)+ggtitle("Epochs vs Loss function with L1 regularization and 32 units")+theme(panel.grid = element_blank(),panel.background = element_blank())+theme_classic()+theme(legend.position = 'top',legend.justification = 'left',legend.title = element_blank())
+p6<-ggplot(model3.df) + geom_line(aes(x=epochs,y=accuracy,color=split),size=0.8,show.legend = F)+geom_point(aes(x=epochs,y=accuracy,color=split),size=1.5,show.legend = F)+ggtitle("Epochs vs Accuracy")+theme(panel.grid = element_blank(),panel.background = element_blank())+theme_classic()
+plot_grid(p5,p6,nrow = 2)
+#From the above plot, the model seems to perform well.
+
+#Using the function, fine tuning the model with differnt inputs.
+model4 <- model_fun(64,20,250)
+#visualizing the model4 metrics
+model4.df <- as.data.frame(model4$metrics)
+names(model4.df) <- c("train_loss","train_accuracy","val_loss","val_accuracy")
+model4.df <- model4.df %>% mutate(epochs=1:n()) %>% gather("split","values",-epochs) %>% separate(split,c("split","metric")) %>% spread(metric,values)
+p7<-ggplot(model4.df) + geom_line(aes(x=epochs,y=loss,color=split),size=0.8)+geom_point(aes(x=epochs,y=loss,color=factor(split)),size=1.5)+ggtitle("Epochs vs Loss function  with L1 regularization and 64 units")+theme(panel.grid = element_blank(),panel.background = element_blank())+theme_classic()+theme(legend.position = 'top',legend.justification = 'left',legend.title = element_blank())
+p8<-ggplot(model4.df) + geom_line(aes(x=epochs,y=accuracy,color=split),size=0.8,show.legend = F)+geom_point(aes(x=epochs,y=accuracy,color=split),size=1.5,show.legend = F)+ggtitle("Epochs vs Accuracy")+theme(panel.grid = element_blank(),panel.background = element_blank())+theme_classic()
+plot_grid(p7,p8,nrow = 2)
+
+
+#Adding more hidden layers to the model
+model5 <- keras_model_sequential() %>%
+  layer_dense(units = 64,kernel_regularizer = regularizer_l1(0.001) ,activation = "tanh", input_shape = c(10000)) %>%
+  layer_dropout(rate = 0.5) %>%
+  layer_dense(units = 64,kernel_regularizer = regularizer_l1(0.001), activation = "tanh" ) %>% 
+  layer_dropout(rate = 0.5) %>%
+  layer_dense(units = 64,kernel_regularizer = regularizer_l1(0.001), activation = "tanh" ) %>%
+  layer_dropout(rate = 0.5) %>%
+  layer_dense(units = 1, activation = "sigmoid")
+model5 %>% compile(
+  optimizer = "rmsprop",
+  loss = "mse",
+  metrics = c("accuracy"))
+history3<-model5 %>% fit(
+  partial_x_train,
+  partial_y_train,
+  epochs = 20,
+  batch_size = 250,
+  validation_data = list(x_val, y_val))
+model5.df <- as.data.frame(history3$metrics)
+names(model5.df) <- c("train_loss","train_accuracy","val_loss","val_accuracy")
+model5.df <- model5.df %>% mutate(epochs=1:n()) %>% gather("split","values",-epochs) %>% separate(split,c("split","metric")) %>% spread(metric,values)
+p9<-ggplot(model5.df) + geom_line(aes(x=epochs,y=loss,color=split),size=0.8)+geom_point(aes(x=epochs,y=loss,color=factor(split)),size=1.5)+ggtitle("Epochs vs Loss function  with 3 hidden layers and regularization")+theme(panel.grid = element_blank(),panel.background = element_blank())+theme_classic()+theme(legend.position = 'top',legend.justification = 'left',legend.title = element_blank())
+p10<-ggplot(model5.df) + geom_line(aes(x=epochs,y=accuracy,color=split),size=0.8,show.legend = F)+geom_point(aes(x=epochs,y=accuracy,color=split),size=1.5,show.legend = F)+ggtitle("Epochs vs Accuracy")+theme(panel.grid = element_blank(),panel.background = element_blank())+theme_classic()
+plot_grid(p9,p10,nrow = 2)
+#Observed the units with 32 but 64 untis tend to perform well. Hence choosing the above model as my best model.
+#choosing epoch value as 7 since it validation started peaking at 7th epoch
+
+
+#Evaluating the model with test data.
+best_model <-  keras_model_sequential() %>%
+  layer_dense(units = 64,kernel_regularizer = regularizer_l1(0.001) ,activation = "tanh", input_shape = c(10000)) %>%
+  layer_dropout(rate = 0.5) %>%
+  layer_dense(units = 64,kernel_regularizer = regularizer_l1(0.001), activation = "tanh" ) %>% 
+  layer_dropout(rate = 0.5) %>%
+  layer_dense(units = 64,kernel_regularizer = regularizer_l1(0.001), activation = "tanh" ) %>%
+  layer_dropout(rate = 0.5) %>%
+  layer_dense(units = 1, activation = "sigmoid")
+best_model %>% compile(
+  optimizer = "rmsprop",
+  loss = "mse",
+  metrics = c("accuracy"))
+history_b<-best_model %>% fit(
+  x_train,
+  y_train,
+  epochs = 7,
+  batch_size = 250)
+modelb.df <- as.data.frame(history_b$metrics)
+modelb.df <- modelb.df %>% mutate(epochs=1:n())
+p11<-ggplot(modelb.df) + geom_line(aes(x=epochs,y=loss),size=0.7,color="blue")+geom_point(aes(x=epochs,y=loss),size=1,color="blue")+ggtitle("Epochs vs Loss function ")+theme(panel.grid = element_blank(),panel.background = element_blank())+theme_classic()+geom_text(aes(epochs,loss,label=round(loss,2)),vjust=-0.2)
+p12<-ggplot(modelb.df) + geom_line(aes(x=epochs,y=accuracy),size=0.7,color="blue")+geom_point(aes(x=epochs,y=accuracy),size=1,color="blue")+ggtitle("Epochs vs Accuracy")+theme(panel.grid = element_blank(),panel.background = element_blank())+theme_classic()+geom_text(aes(epochs,accuracy,label=round(accuracy,2)),vjust=-0.2)
+plot_grid(p11,p12,nrow = 2)
+result<- best_model %>% evaluate(x_test,y_test)
+result
+
+
+
+
+```
+
